@@ -178,6 +178,12 @@ receives either the original task or the original task plus tester feedback when
 - `list_files(directory)` — explores the project structure
 - `run_command(command)` — runs shell commands for installs and checks
 
+**Cost controls:**
+- Model: `claude-sonnet-4-6` (~$0.50–1.50/run; swap commented line for Opus at ~$3–8/run)
+- Prompt caching: system prompt cached with `cache_control: ephemeral` — only charged once per session regardless of iteration count
+- Iteration cap: 25 max — prevents runaway loops from burning credits
+- Rate limit retry: exponential backoff (60s, 120s, 180s) before giving up
+
 ---
 
 ### Tester Agent
@@ -194,6 +200,12 @@ Agent as feedback for the next iteration.
 - `run_command(command)` — runs import checks and tests
 
 **Output:** always ends with `VERDICT: PASS` or `VERDICT: FAIL — <reason>`
+
+**Cost controls:**
+- Model: `claude-sonnet-4-6` (same as Developer Agent)
+- Prompt caching: system prompt cached with `cache_control: ephemeral`
+- Iteration cap: 15 max
+- Rate limit retry: same backoff strategy as Developer Agent
 
 ---
 

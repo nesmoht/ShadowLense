@@ -274,6 +274,13 @@ Every 6 hours:
 | SendGrid (email alerts, free tier) | Free |
 | **Total** | **~$5/month** |
 
+**How costs are kept low:**
+
+- **Model:** `claude-sonnet-4-6` across all agents — ~5× cheaper than Opus with comparable quality for structured extraction tasks. Swap to Opus by uncommenting one line in each agent if you need higher reasoning quality.
+- **Prompt caching:** every agent uses `cache_control: ephemeral` on the system prompt. In a multi-iteration agentic loop (25+ API calls per run), the system prompt is only charged on the first call — subsequent iterations hit the cache at 10% of the normal input price.
+- **Iteration caps:** Developer Agent caps at 25 iterations, Tester Agent at 15. Prevents runaway loops from burning credits if the model gets stuck.
+- **Rate limit retry:** agents back off 60s / 120s / 180s on 429s rather than crashing — keeps runs recoverable without manual intervention.
+
 ---
 
 ## Ethical & Legal Scope

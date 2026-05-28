@@ -127,7 +127,7 @@ class TesterAgent:
                         # model="claude-opus-4-7",  # ~$3-8/run
                         model="claude-sonnet-4-6",  # ~$0.50-1.50/run
                         max_tokens=4096,
-                        system=SYSTEM_PROMPT,
+                        system=[{"type": "text", "text": SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}}],
                         tools=TOOLS,
                         messages=messages
                     )

@@ -75,7 +75,10 @@ class TesterAgent:
         if name == "read_file":
             path = PROJECT_ROOT / inputs["path"]
             try:
-                return {"content": path.read_text(), "path": inputs["path"]}
+                content = path.read_text()
+                if len(content) > 8000:
+                    content = content[:8000] + f"\n... [truncated — {len(content)} chars total]"
+                return {"content": content, "path": inputs["path"]}
             except Exception as e:
                 return {"error": str(e)}
 
@@ -159,6 +162,9 @@ class TesterAgent:
 
             messages.append({"role": "assistant", "content": response.content})
             messages.append({"role": "user", "content": tool_results})
+
+            if len(messages) > 22:
+                messages = messages[:1] + messages[-20:]
 
 
 if __name__ == "__main__":

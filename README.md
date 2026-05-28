@@ -58,30 +58,15 @@ Subscribe to email alerts and get notified the moment a new mention is detected.
 ShadowLense is not a traditional pipeline — it is a **multi-agent AI system**. Each agent owns one layer of the pipeline, has a defined set of tools, and operates independently under an orchestrator.
 
 ```
-Orchestrator Agent
+Orchestrator
   │
-  ├── Crawler Agent
-  │     Role:  Fetches raw content from dark web sources via Tor
-  │     Tools: fetch_tor_page, store_bronze
-  │     Runs:  One instance per source, every 6 hours
-  │
-  ├── Enrichment Agent
-  │     Role:  Extracts threat entities, maps to STIX and MITRE ATT&CK
-  │     Tools: extract_entities, map_stix, map_attack_pattern
-  │     Runs:  Processes all new Bronze records after each crawl
-  │
-  ├── QA Agent
-  │     Role:  Validates enrichment quality, rejects low-confidence records
-  │     Tools: score_confidence, flag_record, reject_record
-  │     Runs:  After Enrichment Agent, before Gold layer write
-  │
-  └── Alert Agent
-        Role:  Monitors Gold layer for domain matches, triggers notifications
-        Tools: search_domain, send_email
-        Runs:  After every Gold layer update
+  ├── Crawler Agent      — fetches raw content from dark web sources via Tor
+  ├── Enrichment Agent   — extracts threat entities, maps to STIX and MITRE ATT&CK
+  ├── QA Agent           — validates enrichment quality, rejects low-confidence records
+  └── Alert Agent        — monitors Gold layer for domain matches, sends email alerts
 ```
 
-Each agent is implemented as a Claude API call with tool use — a narrow job, a specific toolset, and a clear output contract. The Orchestrator coordinates sequencing and handles failures.
+Each agent is a Claude API agentic loop with a narrow job, a specific toolset, and a clear output contract. The Orchestrator coordinates sequencing and handles failures.
 
 **Why agents over a traditional pipeline:**
 - Each agent can reason about its input, not just transform it
@@ -149,7 +134,7 @@ ShadowLense runs entirely on GitHub — zero managed infrastructure.
 
 | Component | Technology | Purpose |
 |---|---|---|
-| Orchestrator Agent | Claude API + Python | Coordinates all agents, handles sequencing and failures |
+| Orchestrator | Python | Coordinates all agents, handles sequencing and failures |
 | Crawler Agent | Claude API + Stem | Fetches raw content from .onion sources via Tor |
 | Enrichment Agent | Claude API + STIX2 | Extracts entities, maps to STIX 2.1 and MITRE ATT&CK |
 | QA Agent | Claude API | Validates enrichment quality, rejects low-confidence records |
@@ -276,12 +261,8 @@ Every 6 hours:
 
 **How costs are kept low:**
 
-- **Model:** `claude-sonnet-4-6` across all agents — ~5× cheaper than Opus with comparable quality for structured extraction tasks. Swap to Opus by uncommenting one line in each agent if you need higher reasoning quality.
-- **Prompt caching:** every agent uses `cache_control: ephemeral` on the system prompt. In a multi-iteration agentic loop (25+ API calls per run), the system prompt is only charged on the first call — subsequent iterations hit the cache at 10% of the normal input price.
-- **Iteration caps:** Developer Agent caps at 25 iterations, Tester Agent at 15. Prevents runaway loops from burning credits if the model gets stuck.
-- **Rate limit retry:** agents back off 60s / 120s / 180s on 429s rather than crashing — keeps runs recoverable without manual intervention.
-- **File read truncation:** `read_file` tool results are capped at 8000 characters. Prevents a single large file from filling the context window and pushing token counts into millions.
-- **Message pruning:** after 10 exchanges the agent drops old messages, always keeping the original task. Context size stays flat across long runs regardless of iteration count.
+- **Model:** `claude-sonnet-4-6` across all agents — ~5× cheaper than Opus with comparable quality for structured extraction. Change in `pipeline/config.py`.
+- **Prompt caching:** every agent passes the system prompt with `cache_control: ephemeral`. In a multi-iteration agentic loop, the system prompt is only charged at full rate on the first call — all subsequent iterations hit the cache at 10% of the normal input price.
 
 ---
 

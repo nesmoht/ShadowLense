@@ -4,17 +4,6 @@ A complete reference for every agent in the project, what it does, and how it fi
 
 ---
 
-## Two Types of Agents
-
-ShadowLense uses agents for two completely different purposes:
-
-| Type | Where | Who runs it | Purpose |
-|---|---|---|---|
-| **Pipeline agents** | `pipeline/agents/` | GitHub Actions (automated, every 6h) | Collect, process and deliver threat intelligence |
-| **Developer agents** | `tools/` | GitHub Actions (on demand, via Build Loop) | Build and validate the codebase autonomously |
-
----
-
 ## Pipeline Agents
 
 Run automatically every 6 hours via GitHub Actions. Together they form the threat intelligence pipeline.
@@ -121,95 +110,12 @@ to subscribers when new matches are found.
 
 ---
 
-## Developer Agents
+## Cost Controls
 
-Triggered on demand via GitHub Actions. The Developer and Tester agents never run
-standalone — they always run together through the Build Loop, which manages the
-feedback cycle between them automatically.
+All pipeline agents use:
 
----
-
-### Build Loop
-**File:** `tools/build_loop.py`
-**Type:** Coordinator — not a true agent (no Claude API call)
-**Triggered by:** `.github/workflows/dev_loop.yml`
-
-Orchestrates the automated dev/test feedback cycle. You provide a task via the
-GitHub Actions UI — the Build Loop handles everything else without any manual steps.
-
-```
-You type a task in GitHub Actions UI
-          ↓
-    Build Loop starts (up to 3 iterations)
-          ↓
-  Developer Agent writes or fixes code
-          ↓
-  Tester Agent validates
-          ↓
-    PASS? → commit changes and done
-    FAIL? → tester feedback sent back to Developer Agent
-          ↓
-  Developer Agent reads feedback and fixes
-          ↓
-  Tester Agent validates again
-          ↓
-  (repeats until PASS or 3 iterations)
-```
-
-**How to trigger:**
-1. Go to GitHub repo → **Actions** tab
-2. Select **ShadowLense Dev Loop**
-3. Click **Run workflow**
-4. Enter your task (e.g. `add search_by_severity to duckdb_store.py`)
-5. Click **Run** — the loop runs, commits any changes back to the repo
-
----
-
-### Developer Agent
-**File:** `tools/dev_agent.py`
-**Type:** True agent — Claude agentic loop with tools
-
-Reads the codebase and implements features autonomously. Called by the Build Loop —
-receives either the original task or the original task plus tester feedback when fixing.
-
-**Tools:**
-- `read_file(path)` — reads an existing file
-- `write_file(path, content)` — creates or overwrites a file
-- `list_files(directory)` — explores the project structure
-- `run_command(command)` — runs shell commands for installs and checks
-
-**Cost controls:**
-- Model: `claude-sonnet-4-6` (~$0.50–1.50/run; swap commented line for Opus at ~$3–8/run)
-- Prompt caching: system prompt cached with `cache_control: ephemeral` — only charged once per session regardless of iteration count
-- Iteration cap: 25 max — prevents runaway loops from burning credits
-- Rate limit retry: exponential backoff (60s, 120s, 180s) before giving up
-- File read truncation: `read_file` results capped at 8000 chars — prevents large files from bloating the context
-- Message pruning: after 10 exchanges, old messages are dropped (original task always kept) — keeps context size flat across long runs
-
----
-
-### Tester Agent
-**File:** `tools/test_agent.py`
-**Type:** True agent — Claude agentic loop with tools
-
-Validates code written by the Developer Agent. Called by the Build Loop after every
-Developer Agent run. If validation fails, its full output is sent back to the Developer
-Agent as feedback for the next iteration.
-
-**Tools:**
-- `read_file(path)` — reads files to review
-- `list_files(directory)` — explores the project
-- `run_command(command)` — runs import checks and tests
-
-**Output:** always ends with `VERDICT: PASS` or `VERDICT: FAIL — <reason>`
-
-**Cost controls:**
-- Model: `claude-sonnet-4-6` (same as Developer Agent)
-- Prompt caching: system prompt cached with `cache_control: ephemeral`
-- Iteration cap: 15 max
-- Rate limit retry: same backoff strategy as Developer Agent
-- File read truncation: `read_file` results capped at 8000 chars
-- Message pruning: keeps original task + last 10 exchanges
+- **Model:** `claude-sonnet-4-6` — ~5× cheaper than Opus with comparable quality for structured extraction. Swap by editing `pipeline/config.py`.
+- **Prompt caching:** system prompt passed with `cache_control: ephemeral` — charged at 10% of normal input price after the first call in a session.
 
 ---
 
@@ -221,7 +127,7 @@ A true agent has three things:
 3. An **agentic loop** — Claude decides which tools to call, executes them, and loops until the task is done
 
 The Orchestrator has none of these — it is a plain Python coordinator.
-The other six are true agents.
+The other four are true agents.
 
 ---
 
@@ -234,6 +140,3 @@ The other six are true agents.
 | Enrichment | Yes | Via Orchestrator |
 | QA | Yes | Via Orchestrator |
 | Alert | Yes | Via Orchestrator |
-| Build Loop | No — coordinator | GitHub Actions on demand |
-| Developer | Yes | Via Build Loop |
-| Tester | Yes | Via Build Loop, feeds back to Developer |

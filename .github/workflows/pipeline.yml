@@ -1,0 +1,48 @@
+name: ShadowLense Pipeline
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+
+jobs:
+  run-pipeline:
+    runs-on: ubuntu-latest
+
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      SENDGRID_API_KEY: ${{ secrets.SENDGRID_API_KEY }}
+      ALERT_FROM_EMAIL: ${{ secrets.ALERT_FROM_EMAIL }}
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          persist-credentials: true
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Tor
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y tor
+          sudo service tor start
+          sleep 5
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run pipeline
+        run: python main.py
+
+      - name: Commit updated data
+        run: |
+          git config user.name "ShadowLense Bot"
+          git config user.email "bot@shadowlense"
+          git add data/
+          git diff --staged --quiet || git commit -m "pipeline: update threat intelligence data"
+          git push

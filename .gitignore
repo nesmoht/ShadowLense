@@ -1,0 +1,20 @@
+.env
+__pycache__/
+*.pyc
+*.pyo
+.python-version
+venv/
+.venv/
+
+# Data files — Parquet committed intentionally, raw dumps not
+data/bronze/*.html
+data/bronze/*.txt
+
+# Frontend
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+
+# IDE
+.vscode/
+.idea/

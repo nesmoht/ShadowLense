@@ -33,6 +33,7 @@ jobs:
         run: python tools/build_loop.py "${{ github.event.inputs.task }}"
 
       - name: Commit changes if any
+        if: always()
         run: |
           git config user.name "ShadowLense Dev Loop"
           git config user.email "devloop@shadowlense"

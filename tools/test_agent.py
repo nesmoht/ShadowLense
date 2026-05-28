@@ -115,7 +115,7 @@ class TesterAgent:
 
         return {"error": f"Unknown tool: {name}"}
 
-    def run(self, task: str, max_iterations: int = 15) -> str:
+    def run(self, task: str, max_iterations: int = 25) -> str:
         print(f"\n[Tester Agent] Validating: {task}\n")
         messages = [{"role": "user", "content": task}]
         iteration = 0
@@ -165,6 +165,8 @@ class TesterAgent:
 
             if len(messages) > 22:
                 messages = messages[:1] + messages[-20:]
+
+        return "VERDICT: FAIL — max iterations reached without verdict"
 
 
 if __name__ == "__main__":

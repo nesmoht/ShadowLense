@@ -11,7 +11,8 @@ class Config:
     anthropic_api_key: str = field(
         default_factory=lambda: os.environ["ANTHROPIC_API_KEY"]
     )
-    model: str = "claude-opus-4-7"
+    # model: str = "claude-opus-4-7"  # ~$3-8/run
+    model: str = "claude-sonnet-4-6"  # ~$0.50-1.50/run
 
     # SendGrid
     sendgrid_api_key: str = field(

@@ -121,7 +121,8 @@ class TesterAgent:
             print(f"[Tester Agent] Iteration {iteration}...")
 
             response = self.client.messages.create(
-                model="claude-opus-4-7",
+                # model="claude-opus-4-7",  # ~$3-8/run
+                model="claude-sonnet-4-6",  # ~$0.50-1.50/run
                 max_tokens=4096,
                 system=SYSTEM_PROMPT,
                 tools=TOOLS,

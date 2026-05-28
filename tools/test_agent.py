@@ -5,6 +5,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import anthropic
@@ -111,23 +112,32 @@ class TesterAgent:
 
         return {"error": f"Unknown tool: {name}"}
 
-    def run(self, task: str) -> str:
+    def run(self, task: str, max_iterations: int = 15) -> str:
         print(f"\n[Tester Agent] Validating: {task}\n")
         messages = [{"role": "user", "content": task}]
         iteration = 0
 
-        while True:
+        while iteration < max_iterations:
             iteration += 1
-            print(f"[Tester Agent] Iteration {iteration}...")
+            print(f"[Tester Agent] Iteration {iteration}/{max_iterations}...")
 
-            response = self.client.messages.create(
-                # model="claude-opus-4-7",  # ~$3-8/run
-                model="claude-sonnet-4-6",  # ~$0.50-1.50/run
-                max_tokens=4096,
-                system=SYSTEM_PROMPT,
-                tools=TOOLS,
-                messages=messages
-            )
+            for attempt in range(4):
+                try:
+                    response = self.client.messages.create(
+                        # model="claude-opus-4-7",  # ~$3-8/run
+                        model="claude-sonnet-4-6",  # ~$0.50-1.50/run
+                        max_tokens=4096,
+                        system=SYSTEM_PROMPT,
+                        tools=TOOLS,
+                        messages=messages
+                    )
+                    break
+                except anthropic.RateLimitError:
+                    wait = 60 * (attempt + 1)
+                    print(f"  [rate limit] waiting {wait}s before retry {attempt + 1}/3...")
+                    time.sleep(wait)
+            else:
+                return "VERDICT: FAIL — rate limit retries exhausted"
 
             tool_uses = [b for b in response.content if b.type == "tool_use"]
 

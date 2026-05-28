@@ -183,6 +183,8 @@ receives either the original task or the original task plus tester feedback when
 - Prompt caching: system prompt cached with `cache_control: ephemeral` — only charged once per session regardless of iteration count
 - Iteration cap: 25 max — prevents runaway loops from burning credits
 - Rate limit retry: exponential backoff (60s, 120s, 180s) before giving up
+- File read truncation: `read_file` results capped at 8000 chars — prevents large files from bloating the context
+- Message pruning: after 10 exchanges, old messages are dropped (original task always kept) — keeps context size flat across long runs
 
 ---
 
@@ -206,6 +208,8 @@ Agent as feedback for the next iteration.
 - Prompt caching: system prompt cached with `cache_control: ephemeral`
 - Iteration cap: 15 max
 - Rate limit retry: same backoff strategy as Developer Agent
+- File read truncation: `read_file` results capped at 8000 chars
+- Message pruning: keeps original task + last 10 exchanges
 
 ---
 

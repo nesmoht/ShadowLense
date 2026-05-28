@@ -280,6 +280,8 @@ Every 6 hours:
 - **Prompt caching:** every agent uses `cache_control: ephemeral` on the system prompt. In a multi-iteration agentic loop (25+ API calls per run), the system prompt is only charged on the first call — subsequent iterations hit the cache at 10% of the normal input price.
 - **Iteration caps:** Developer Agent caps at 25 iterations, Tester Agent at 15. Prevents runaway loops from burning credits if the model gets stuck.
 - **Rate limit retry:** agents back off 60s / 120s / 180s on 429s rather than crashing — keeps runs recoverable without manual intervention.
+- **File read truncation:** `read_file` tool results are capped at 8000 characters. Prevents a single large file from filling the context window and pushing token counts into millions.
+- **Message pruning:** after 10 exchanges the agent drops old messages, always keeping the original task. Context size stays flat across long runs regardless of iteration count.
 
 ---
 

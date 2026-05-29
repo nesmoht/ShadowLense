@@ -16,14 +16,44 @@ logger = logging.getLogger(__name__)
 _TOOLS: list[dict[str, Any]] = [
     {
         "name": "extract_entities",
-        "description": "Extract structured threat entities from raw dark web content.",
+        "description": (
+            "Record the threat entities you have extracted from the Bronze content. "
+            "You must supply all fields based on your analysis of the raw content."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
-                "text": {"type": "string", "description": "Raw content to analyse."},
                 "source_url": {"type": "string", "description": "Origin URL of the content."},
+                "category": {
+                    "type": "string",
+                    "description": "Threat category: credential_leak, ransomware, c2_infrastructure, exploit, or other.",
+                },
+                "severity": {
+                    "type": "string",
+                    "description": "Risk level: critical, high, medium, or low.",
+                },
+                "affected_domains": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Domain names explicitly mentioned in the content.",
+                },
+                "ioc_type": {
+                    "type": "string",
+                    "description": "Indicator type: domain, ip, hash, email, url, or other.",
+                },
+                "ai_summary": {
+                    "type": "string",
+                    "description": "1-2 sentence description of the threat.",
+                },
+                "source_credibility": {
+                    "type": "number",
+                    "description": "Source trust score 0.0 to 1.0 based on reputation and content quality.",
+                },
             },
-            "required": ["text", "source_url"],
+            "required": [
+                "source_url", "category", "severity", "affected_domains",
+                "ioc_type", "ai_summary", "source_credibility",
+            ],
         },
     },
     {
@@ -62,7 +92,11 @@ _TOOLS: list[dict[str, Any]] = [
             "properties": {
                 "record": {
                     "type": "object",
-                    "description": "Silver record dict to persist.",
+                    "description": (
+                        "Assembled Silver record. Must include: bronze_id, source_url, "
+                        "category, severity, affected_domains, ioc_type, ai_summary, "
+                        "stix_indicator, attack_technique, source_credibility, enriched_at."
+                    ),
                 },
             },
             "required": ["record"],
@@ -71,9 +105,21 @@ _TOOLS: list[dict[str, Any]] = [
 ]
 
 _SYSTEM_PROMPT = (
-    "You are a threat intelligence enrichment agent. Extract structured threat entities "
-    "from raw dark web content. Identify IOC types, affected domains, severity, and "
-    "threat category."
+    "You are a threat intelligence enrichment agent. For each Bronze record provided:\n"
+    "1. Read the content carefully and extract threat entities.\n"
+    "2. Call extract_entities with the source_url and ALL fields you extracted:\n"
+    "   - category: one of credential_leak, ransomware, c2_infrastructure, exploit, other\n"
+    "   - severity: one of critical, high, medium, low\n"
+    "   - affected_domains: list of domain names mentioned in the content\n"
+    "   - ioc_type: one of domain, ip, hash, email, url, other\n"
+    "   - ai_summary: 1-2 sentence description of the threat\n"
+    "   - source_credibility: 0.0 to 1.0 based on source reputation and content quality\n"
+    "3. Call map_stix with the entities dict returned by extract_entities.\n"
+    "4. Call map_attack_pattern with the category.\n"
+    "5. Assemble a complete silver record merging all outputs and call store_silver.\n"
+    "   The silver record must include: bronze_id, source_url, category, severity, "
+    "affected_domains, ioc_type, ai_summary, stix_indicator (from map_stix), "
+    "attack_technique (from map_attack_pattern), source_credibility, enriched_at."
 )
 
 
@@ -92,8 +138,15 @@ class EnrichmentAgent:
             return stored_ids
 
         records_text = json.dumps(
-            [{"id": r.get("id"), "url": r.get("url"), "content": r.get("content", "")[:2000]}
-             for r in bronze_records],
+            [
+                {
+                    "id": r.get("id"),
+                    "url": r.get("url"),
+                    "source_name": r.get("source_name"),
+                    "content": r.get("content", "")[:4000],
+                }
+                for r in bronze_records
+            ],
             indent=2,
         )
 
@@ -102,10 +155,12 @@ class EnrichmentAgent:
                 "role": "user",
                 "content": (
                     "Enrich the following Bronze layer records. For each record:\n"
-                    "1. Call extract_entities with the content and source URL.\n"
+                    "1. Call extract_entities with your extracted fields and the source URL.\n"
                     "2. Call map_stix with the extracted entities.\n"
                     "3. Call map_attack_pattern with the detected category.\n"
-                    "4. Call store_silver with the assembled silver record.\n\n"
+                    "4. Assemble and call store_silver with the complete silver record "
+                    "(merge bronze_id and enriched_at from extract_entities, "
+                    "stix_indicator from map_stix, attack_technique from map_attack_pattern).\n\n"
                     f"Records:\n{records_text}"
                 ),
             }
@@ -135,14 +190,17 @@ class EnrichmentAgent:
                     continue
 
                 result = self._dispatch_tool(block.name, block.input, bronze_records)
-                if isinstance(result, str) and result.startswith("STORED:"):
-                    stored_ids.append(result[len("STORED:"):])
+                logger.debug("Tool %s → %s", block.name, result)
+
+                if isinstance(result, dict) and result.get("stored"):
+                    stored_ids.append(result["record_id"])
+                    logger.info("EnrichmentAgent stored silver record %s.", result["record_id"])
 
                 tool_results.append(
                     {
                         "type": "tool_result",
                         "tool_use_id": block.id,
-                        "content": json.dumps(result) if not isinstance(result, str) else result,
+                        "content": json.dumps(result),
                     }
                 )
 
@@ -158,20 +216,25 @@ class EnrichmentAgent:
         bronze_records: list[dict[str, Any]],
     ) -> Any:
         if name == "extract_entities":
-            text = inputs.get("text", "")
             source_url = inputs.get("source_url", "")
             bronze_record = next(
                 (r for r in bronze_records if r.get("url") == source_url), {}
             )
+            if not bronze_record:
+                logger.warning("extract_entities: no bronze record found for URL %s", source_url)
+
+            credibility = float(inputs.get("source_credibility", 0.5))
+            credibility = max(0.0, min(1.0, credibility))
+
             return {
                 "bronze_id": bronze_record.get("id", ""),
                 "source_url": source_url,
-                "category": "unknown",
-                "severity": "medium",
-                "affected_domains": [],
-                "ioc_type": "domain",
-                "ai_summary": text[:500],
-                "source_credibility": 0.5,
+                "category": inputs.get("category", "other"),
+                "severity": inputs.get("severity", "medium"),
+                "affected_domains": inputs.get("affected_domains", []),
+                "ioc_type": inputs.get("ioc_type", "other"),
+                "ai_summary": inputs.get("ai_summary", ""),
+                "source_credibility": credibility,
                 "enriched_at": datetime.now(timezone.utc).isoformat(),
             }
 
@@ -181,6 +244,7 @@ class EnrichmentAgent:
                 stix = create_stix_indicator(entities)
                 return {"stix_indicator": stix}
             except Exception as exc:
+                logger.warning("map_stix failed: %s", exc)
                 return {"stix_indicator": {}, "error": str(exc)}
 
         if name == "map_attack_pattern":
@@ -189,7 +253,15 @@ class EnrichmentAgent:
 
         if name == "store_silver":
             record = inputs.get("record", {})
+            missing = [
+                f for f in ("bronze_id", "source_url", "category", "severity",
+                            "ioc_type", "ai_summary", "enriched_at")
+                if not record.get(f)
+            ]
+            if missing:
+                logger.warning("store_silver: record missing fields %s", missing)
+                return {"error": f"missing required fields: {missing}"}
             record_id = self.store.store_silver(record)
-            return f"STORED:{record_id}"
+            return {"stored": True, "record_id": record_id}
 
-        return f"Unknown tool: {name}"
+        return {"error": f"Unknown tool: {name}"}

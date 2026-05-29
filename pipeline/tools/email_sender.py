@@ -1,9 +1,12 @@
 """SendGrid email alert sender for ShadowLense."""
 
+import logging
 from typing import Any
 
 from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import Mail
+
+logger = logging.getLogger(__name__)
 
 
 def send_alert(
@@ -59,4 +62,5 @@ def send_alert(
         response = client.send(message)
         return response.status_code in (200, 202)
     except Exception:
+        logger.exception("SendGrid send failed for %s (domain: %s)", to_email, domain)
         return False

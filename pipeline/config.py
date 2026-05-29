@@ -1,8 +1,11 @@
 """Configuration — reads environment variables and exposes typed settings."""
 
+import logging
 import os
 from dataclasses import dataclass, field
 from typing import List
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -49,24 +52,41 @@ class Config:
         default_factory=lambda: os.getenv("ALERT_TO_EMAIL", "security@example.com")
     )
 
+    # QA thresholds
+    qa_confidence_threshold: float = field(
+        default_factory=lambda: float(os.getenv("QA_CONFIDENCE_THRESHOLD", "0.7"))
+    )
+    qa_max_iterations: int = field(
+        default_factory=lambda: int(os.getenv("QA_MAX_ITERATIONS", "30"))
+    )
+
     # Clearnet / onion sources to crawl
     sources: List[dict] = field(default_factory=lambda: [
         {
             "url": "https://ahmia.fi/search/?q=malware+for+sale",
+            "source_name": "ahmia",
             "source_type": "ahmia_search",
             "use_tor": False,
         },
         {
             "url": "https://urlhaus-api.abuse.ch/v1/urls/recent/",
+            "source_name": "urlhaus",
             "source_type": "urlhaus_api",
             "use_tor": False,
         },
         {
             "url": "https://bazaar.abuse.ch/api/",
+            "source_name": "malware_bazaar",
             "source_type": "malware_bazaar",
             "use_tor": False,
         },
     ])
+
+    def __post_init__(self) -> None:
+        if not self.sendgrid_api_key:
+            logger.warning(
+                "SENDGRID_API_KEY is not set — alert emails will not be sent."
+            )
 
     @property
     def bronze_dir(self) -> str:

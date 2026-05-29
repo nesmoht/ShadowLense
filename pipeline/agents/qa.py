@@ -44,8 +44,9 @@ _TOOLS: list[dict[str, Any]] = [
             "type": "object",
             "properties": {
                 "record_id": {"type": "string"},
+                "reason": {"type": "string"},
             },
-            "required": ["record_id"],
+            "required": ["record_id", "reason"],
         },
     },
     {
@@ -63,9 +64,16 @@ _TOOLS: list[dict[str, Any]] = [
 ]
 
 _SYSTEM_PROMPT = (
-    "You are a quality assurance agent for threat intelligence data. Evaluate each Silver "
-    "layer record for accuracy, completeness, and confidence. "
-    "Approve records with confidence >= 0.7. Reject the rest."
+    "You are a quality assurance agent for threat intelligence data. "
+    "Each Silver record has these fields: id, category, severity, affected_domains "
+    "(list of domains), ioc_type, ai_summary, stix_indicator, attack_technique, source_credibility.\n\n"
+    "For each record:\n"
+    "1. Call get_silver_records to retrieve pending records.\n"
+    "2. Call score_record with a confidence between 0.0 and 1.0 and your reasoning.\n"
+    "   Approve only records that have: clear category, non-empty ai_summary, "
+    "confidence >= 0.7, and at least one affected_domain or IOC.\n"
+    "3. Call approve_record for records with confidence >= 0.7.\n"
+    "4. Call reject_record for records with confidence < 0.7, giving a clear reason."
 )
 
 
@@ -77,7 +85,7 @@ class QAAgent:
         self._scores: dict[str, float] = {}
 
     def run(self, silver_records: list[dict[str, Any]]) -> list[str]:
-        """Score and approve/reject silver records. Returns list of approved Gold record IDs."""
+        """Score and approve/reject silver records. Returns list of approved Silver record IDs."""
         approved_ids: list[str] = []
 
         if not silver_records:
@@ -95,7 +103,11 @@ class QAAgent:
             }
         ]
 
-        while True:
+        max_iterations = self.config.qa_max_iterations
+        iteration = 0
+
+        while iteration < max_iterations:
+            iteration += 1
             response = self.client.messages.create(
                 model=self.config.model,
                 max_tokens=4096,
@@ -126,11 +138,14 @@ class QAAgent:
                     {
                         "type": "tool_result",
                         "tool_use_id": block.id,
-                        "content": json.dumps(result) if not isinstance(result, str) else result,
+                        "content": json.dumps(result),
                     }
                 )
 
             messages.append({"role": "user", "content": tool_results})
+
+        if iteration >= max_iterations:
+            logger.warning("QAAgent hit max iterations limit (%d).", max_iterations)
 
         logger.info("QAAgent approved %d records to Gold.", len(approved_ids))
         return approved_ids
@@ -143,24 +158,43 @@ class QAAgent:
         approved_ids: list[str],
     ) -> Any:
         if name == "get_silver_records":
-            return self.store.get_new_silver_records()
+            return silver_records
 
         if name == "score_record":
             record_id = inputs["record_id"]
             confidence = float(inputs.get("confidence", 0.0))
+            confidence = max(0.0, min(1.0, confidence))
             self._scores[record_id] = confidence
+            logger.info(
+                "QAAgent scored %s: %.2f — %s",
+                record_id, confidence, inputs.get("reasoning", ""),
+            )
             return {"record_id": record_id, "confidence": confidence, "scored": True}
 
         if name == "approve_record":
             record_id = inputs["record_id"]
-            self.store.approve_to_gold(record_id)
+            confidence = self._scores.get(record_id, 0.0)
+            threshold = self.config.qa_confidence_threshold
+            if confidence < threshold:
+                logger.warning(
+                    "QAAgent blocked approval of %s: score %.2f < threshold %.2f",
+                    record_id, confidence, threshold,
+                )
+                return {
+                    "record_id": record_id,
+                    "approved": False,
+                    "error": f"score {confidence:.2f} below threshold {threshold:.2f}",
+                }
+            self.store.approve_to_gold(record_id, confidence)
             approved_ids.append(record_id)
+            logger.info("QAAgent approved %s (confidence %.2f).", record_id, confidence)
             return {"record_id": record_id, "approved": True}
 
         if name == "reject_record":
             record_id = inputs["record_id"]
             reason = inputs.get("reason", "")
-            logger.info("QAAgent rejected record %s: %s", record_id, reason)
+            self.store.reject_silver(record_id, reason)
+            logger.info("QAAgent rejected %s: %s", record_id, reason)
             return {"record_id": record_id, "rejected": True, "reason": reason}
 
-        return f"Unknown tool: {name}"
+        return {"error": f"Unknown tool: {name}"}

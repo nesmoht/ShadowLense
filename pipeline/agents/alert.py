@@ -58,21 +58,47 @@ class AlertAgent:
         self.client = anthropic.Anthropic(api_key=config.anthropic_api_key)
 
     def run(self, gold_record_ids: list[str]) -> None:
-        """Check watched domains against Gold layer and dispatch alerts."""
+        """Check watched domains against newly approved Gold records and dispatch alerts."""
+        if not gold_record_ids:
+            logger.info("AlertAgent: no new gold records to check.")
+            return
+
         watched_domains = self.config.alert_domains
         if not watched_domains:
             logger.info("AlertAgent: no watched domains configured, skipping.")
             return
 
-        domains_text = ", ".join(watched_domains)
+        if not self.config.sendgrid_api_key:
+            logger.warning("AlertAgent: SENDGRID_API_KEY not set, skipping alerts.")
+            return
+
+        # Scope to domains that appear in the newly approved Gold records only
+        new_gold_records = self.store.get_gold_records_by_silver_ids(gold_record_ids)
+        if not new_gold_records:
+            logger.info("AlertAgent: no gold records found for the approved IDs.")
+            return
+
+        new_domains: set[str] = set()
+        for record in new_gold_records:
+            for d in record.get("affected_domains", []):
+                new_domains.add(d.lower())
+
+        relevant_domains = [d for d in watched_domains if d.lower() in new_domains]
+        if not relevant_domains:
+            logger.info("AlertAgent: no watched domains appear in newly approved records.")
+            return
+
+        domains_text = ", ".join(relevant_domains)
+        logger.info("AlertAgent: checking domains: %s", domains_text)
+
         messages = [
             {
                 "role": "user",
                 "content": (
-                    f"Check the Gold layer for threats involving these monitored domains: "
+                    f"The following watched domains appear in newly approved threat records: "
                     f"{domains_text}\n\n"
-                    f"For each domain, call search_gold_for_domain. "
-                    f"If matches are found, call send_alert with the recipient "
+                    f"For each domain, call search_gold_for_domain to get full threat context, "
+                    f"then call send_alert with the recipient "
                     f"{self.config.alert_to_email}, the domain, and a threat summary."
                 ),
             }
@@ -101,13 +127,14 @@ class AlertAgent:
                 if block.type != "tool_use":
                     continue
 
+                logger.debug("AlertAgent calling tool: %s %s", block.name, block.input)
                 result = self._dispatch_tool(block.name, block.input)
 
                 tool_results.append(
                     {
                         "type": "tool_result",
                         "tool_use_id": block.id,
-                        "content": json.dumps(result) if not isinstance(result, str) else result,
+                        "content": json.dumps(result),
                     }
                 )
 
@@ -116,19 +143,23 @@ class AlertAgent:
     def _dispatch_tool(self, name: str, inputs: dict[str, Any]) -> Any:
         if name == "search_gold_for_domain":
             domain = inputs["domain"]
-            return self.store.search_domain(domain)
+            results = self.store.search_domain(domain)
+            logger.info("AlertAgent: search_gold_for_domain(%s) → %d records", domain, len(results))
+            return results
 
         if name == "send_alert":
             to_email = inputs["to_email"]
             domain = inputs["domain"]
-            threat_summary = inputs.get("threat_summary", "")
             threats = self.store.search_domain(domain)
+            if not threats:
+                logger.warning("AlertAgent: no threats found for domain %s at send time.", domain)
+                return {"sent": False, "domain": domain, "reason": "no_threats_found"}
             success = _send_alert(
                 api_key=self.config.sendgrid_api_key,
                 from_email=self.config.alert_from_email,
                 to_email=to_email,
                 domain=domain,
-                threats=threats if threats else [{"ai_summary": threat_summary}],
+                threats=threats,
             )
             if success:
                 logger.info("AlertAgent: sent alert for domain %s to %s.", domain, to_email)
@@ -136,4 +167,4 @@ class AlertAgent:
                 logger.warning("AlertAgent: failed to send alert for domain %s.", domain)
             return {"sent": success, "domain": domain, "to": to_email}
 
-        return f"Unknown tool: {name}"
+        return {"error": f"Unknown tool: {name}"}

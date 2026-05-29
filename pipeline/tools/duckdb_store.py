@@ -3,6 +3,7 @@
 import hashlib
 import json
 import os
+from datetime import datetime, timezone
 from typing import Any
 
 import duckdb
@@ -68,6 +69,14 @@ _GOLD_SCHEMA = pa.schema(
     ]
 )
 
+_REJECTED_SCHEMA = pa.schema(
+    [
+        pa.field("silver_id", pa.string()),
+        pa.field("reason", pa.string()),
+        pa.field("rejected_at", pa.string()),
+    ]
+)
+
 
 class DuckDBStore:
     """Parquet-backed store with a DuckDB query layer."""
@@ -77,10 +86,12 @@ class DuckDBStore:
         self._bronze_path = os.path.join(data_dir, "bronze", "records.parquet")
         self._silver_path = os.path.join(data_dir, "silver", "records.parquet")
         self._gold_path = os.path.join(data_dir, "gold", "records.parquet")
+        self._rejected_path = os.path.join(data_dir, "silver", "rejected.parquet")
 
         _ensure_parquet(self._bronze_path, _BRONZE_SCHEMA)
         _ensure_parquet(self._silver_path, _SILVER_SCHEMA)
         _ensure_parquet(self._gold_path, _GOLD_SCHEMA)
+        _ensure_parquet(self._rejected_path, _REJECTED_SCHEMA)
 
         self._con = duckdb.connect()
 
@@ -127,6 +138,7 @@ class DuckDBStore:
     def store_silver(self, record: dict[str, Any]) -> str:
         """Append a silver record, return its id."""
         record_id = _sha256(record.get("bronze_id", "") + record.get("enriched_at", ""))
+        stix = record.get("stix_indicator", {})
         row = {
             "id": record_id,
             "bronze_id": record.get("bronze_id", ""),
@@ -136,7 +148,9 @@ class DuckDBStore:
             "affected_domains": json.dumps(record.get("affected_domains", [])),
             "ioc_type": record.get("ioc_type", ""),
             "ai_summary": record.get("ai_summary", ""),
-            "stix_indicator": json.dumps(record.get("stix_indicator", {})),
+            # stix_indicator may already be a JSON string (if Claude passed it as-is)
+            # or a dict — normalise to string for storage
+            "stix_indicator": stix if isinstance(stix, str) else json.dumps(stix),
             "attack_technique": record.get("attack_technique", ""),
             "source_credibility": float(record.get("source_credibility", 0.0)),
             "enriched_at": record.get("enriched_at", ""),
@@ -145,11 +159,16 @@ class DuckDBStore:
         return record_id
 
     def get_new_silver_records(self) -> list[dict[str, Any]]:
-        """Return silver records whose id does not appear in the gold layer."""
+        """Return silver records not yet in gold and not rejected."""
         gold_ids = self._con.execute(
             f"SELECT silver_id FROM read_parquet('{self._gold_path}')"
         ).fetchall()
         gold_set = {r[0] for r in gold_ids}
+
+        rejected_ids = self._con.execute(
+            f"SELECT silver_id FROM read_parquet('{self._rejected_path}')"
+        ).fetchall()
+        rejected_set = {r[0] for r in rejected_ids}
 
         rows = self._con.execute(
             f"SELECT * FROM read_parquet('{self._silver_path}')"
@@ -157,23 +176,31 @@ class DuckDBStore:
 
         result = []
         for _, row in rows.iterrows():
-            if row["id"] not in gold_set:
+            if row["id"] not in gold_set and row["id"] not in rejected_set:
                 d = row.to_dict()
                 d["affected_domains"] = json.loads(d.get("affected_domains", "[]"))
                 d["stix_indicator"] = json.loads(d.get("stix_indicator", "{}"))
                 result.append(d)
         return result
 
+    def reject_silver(self, record_id: str, reason: str) -> None:
+        """Mark a silver record as rejected so it is excluded from future QA runs."""
+        row = {
+            "silver_id": record_id,
+            "reason": reason,
+            "rejected_at": datetime.now(timezone.utc).isoformat(),
+        }
+        self._append(_REJECTED_SCHEMA, self._rejected_path, row)
+
     # ------------------------------------------------------------------
     # Gold
     # ------------------------------------------------------------------
 
-    def approve_to_gold(self, record_id: str) -> None:
-        """Copy a silver record to the gold layer."""
-        from datetime import datetime, timezone
-
+    def approve_to_gold(self, record_id: str, qa_confidence: float) -> None:
+        """Copy a silver record to the gold layer using the QA confidence score."""
         rows = self._con.execute(
-            f"SELECT * FROM read_parquet('{self._silver_path}') WHERE id = '{record_id}'"
+            f"SELECT * FROM read_parquet('{self._silver_path}') WHERE id = ?",
+            [record_id],
         ).fetchdf()
 
         if rows.empty:
@@ -190,8 +217,8 @@ class DuckDBStore:
             "ai_summary": silver_row.get("ai_summary", ""),
             "stix_indicator": silver_row.get("stix_indicator", "{}"),
             "attack_technique": silver_row.get("attack_technique", ""),
-            "confidence": float(silver_row.get("source_credibility", 0.0)),
-            "embedding_cluster": 0,
+            "confidence": float(qa_confidence),
+            "embedding_cluster": -1,  # not yet implemented
             "approved_at": datetime.now(timezone.utc).isoformat(),
         }
         self._append(_GOLD_SCHEMA, self._gold_path, gold_row)
@@ -200,7 +227,8 @@ class DuckDBStore:
         """Search gold layer records whose affected_domains contains the domain."""
         rows = self._con.execute(
             f"SELECT * FROM read_parquet('{self._gold_path}') "
-            f"WHERE affected_domains LIKE '%{domain}%'"
+            "WHERE affected_domains LIKE ?",
+            [f"%{domain}%"],
         ).fetchdf()
 
         result = []
@@ -209,6 +237,24 @@ class DuckDBStore:
             d["affected_domains"] = json.loads(d.get("affected_domains", "[]"))
             d["stix_indicator"] = json.loads(d.get("stix_indicator", "{}"))
             result.append(d)
+        return result
+
+    def get_gold_records_by_silver_ids(self, silver_ids: list[str]) -> list[dict[str, Any]]:
+        """Return gold records matching the given silver record IDs."""
+        if not silver_ids:
+            return []
+        silver_set = set(silver_ids)
+        rows = self._con.execute(
+            f"SELECT * FROM read_parquet('{self._gold_path}')"
+        ).fetchdf()
+
+        result = []
+        for _, row in rows.iterrows():
+            if row["silver_id"] in silver_set:
+                d = row.to_dict()
+                d["affected_domains"] = json.loads(d.get("affected_domains", "[]"))
+                d["stix_indicator"] = json.loads(d.get("stix_indicator", "{}"))
+                result.append(d)
         return result
 
     # ------------------------------------------------------------------

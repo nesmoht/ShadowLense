@@ -1,5 +1,6 @@
 """STIX 2.1 mapping helpers for ShadowLense threat records."""
 
+import json
 from datetime import datetime, timezone
 
 import stix2
@@ -18,7 +19,7 @@ def create_stix_indicator(record: dict) -> dict:
 
     Expects record to have at least: category, ai_summary, affected_domains,
     ioc_type, attack_technique, source_url.
-    Returns the indicator serialised to a plain dict.
+    Returns the indicator as a plain dict (not a JSON string).
     """
     affected = record.get("affected_domains", [])
     domain_pattern = " OR ".join(
@@ -39,7 +40,7 @@ def create_stix_indicator(record: dict) -> dict:
             )
         ] if record.get("source_url") else [],
     )
-    return indicator.serialize(pretty=False, ensure_ascii=False)  # type: ignore[return-value]
+    return json.loads(indicator.serialize(pretty=False, ensure_ascii=False))
 
 
 def get_attack_technique(category: str) -> str:

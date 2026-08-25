@@ -1,0 +1,7 @@
+data/
+frontend/
+infra/
+.git/
+.env
+__pycache__/
+*.pyc

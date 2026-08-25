@@ -3,6 +3,7 @@ stem>=1.8.0
 requests[socks]>=2.31.0
 beautifulsoup4>=4.12.0
 duckdb>=0.10.0
+pandas>=2.2.0
 pyarrow>=14.0.0
 stix2>=3.0.0
 sentence-transformers>=2.7.0

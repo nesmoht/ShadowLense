@@ -2,6 +2,20 @@
 
 Status: **design only, not implemented**. Written 2026-08-26.
 
+## Purpose (clarified 2026-08-26)
+
+Shadowlense's practical goal is a personal, lightweight "am I / are these
+domains in a breach" lookup — a light HIBP, not a public service. Scope:
+personal use only (no other users), domain-level lookups only (no
+individual email/credential storage), primarily a learning vehicle for
+understanding the threat landscape rather than a product. This removes most
+of HIBP's actual hard problems (no data-exposure risk to other people, no
+abuse/rate-limiting surface, no PII handling responsibility) — the Gold
+layer's `affected_domains` field plus a simple `duckdb`/`read_parquet` query
+already mostly *is* this tool; no new service needs building. Given that,
+the priority is data coverage/breadth, which is what the rest of this
+document is about.
+
 ## Why
 
 Current sources (`ahmia`, `urlhaus`, `malware_bazaar` in `pipeline/config.py`)
@@ -37,6 +51,20 @@ from "crawl the dark web" to specific, bounded source categories.
   actually running on the host — ties into the macOS hosting design
   ([[project_shadowlense]] macOS section): `brew install tor` on the Mac
   Mini alongside the container setup.
+
+### Ransomware.live structured API (clearnet, alongside the Tor DLS crawl)
+
+- New `source_type: "ransomware_live_api"`, clearnet only, no Tor.
+- Ransomware.live's own API already returns structured victim records
+  (company, industry, country, group, date) — it's what sources the
+  whitelist addresses for the Tor crawl above, but the victim data itself
+  is also directly useful and far cheaper to consume: no Tor proxy, no HTML
+  parsing, already structured.
+- Complements rather than replaces the raw Tor DLS crawl: this gives
+  clean, low-effort victim/domain metadata (good match for the domain-lookup
+  goal above); the Tor crawl gives the richer raw content (ransom note text,
+  proof-of-data, deadlines) that ransomware.live's API doesn't expose.
+- Same licensing note as above: free for personal use, not commercial.
 
 ### Credential exposure via DeHashed (no onion crawling)
 

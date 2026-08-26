@@ -30,15 +30,27 @@ the Mac Mini instead of via the Anthropic API.
   plain prompt-in/text-out). MLX considered as a higher-performance
   alternative, more manual setup — not chosen for iteration 1, simplicity
   wins while everything else is also new.
-- **Model candidates**: Qwen2.5 7B/14B (strong structured-output/JSON
-  extraction, good instruction-following) or Llama 3.1 8B (solid
-  tool-calling support in Ollama). Not pinned yet — pick when actually
-  implementing, based on what's available in Ollama's library at the time.
-- **Sizing**: the Mac Mini M6 base config now starts at 16GB RAM (not 8GB —
-  corrects an earlier estimate in this project's chat history). A 7-8B
-  model at Q4 quantization needs ~4-5GB RAM, comfortable alongside Docker +
-  macOS on 16GB. A 14B model (~8-9GB at Q4) is safer on the 24GB M5 Pro
-  tier if that's the config bought.
+- **Model family: Qwen3**, not Qwen2.5/Llama 3.1 (superseded — see below).
+  Native tool-calling on every size via Ollama's standard API, no custom
+  Modelfile or prompt template needed — directly compatible with
+  `EnrichmentAgent`/`QAAgent`'s existing Claude tool-use loop pattern.
+- **Two-tier model pin, matching the two agent stages**:
+  - **Enrichment** (high volume — every crawled raw page): **Qwen3 8B or
+    14B**. A well-scoped extraction task, doesn't need the largest model,
+    should stay fast.
+  - **QA scoring** (low volume, but the decision gating Gold/alerts —
+    accepted quality risk in iteration 1 below): **Qwen3 32B (dense) or
+    30B-A3B (MoE)**. Worth the larger size specifically here since this is
+    where local-vs-Claude judgment quality matters most. The 30B-A3B MoE
+    variant activates only ~3B parameters per token, giving close to 32B
+    quality at meaningfully faster inference.
+- **Hardware decision: Mac Mini M5 Pro, 24GB RAM** (not M6). Ollama's own
+  hardware guidance targets 24GB for Qwen3 32B/30B-A3B specifically — this
+  isn't over-provisioning, 24GB is the right size for the QA-stage model.
+  M5 Pro's 307GB/s memory bandwidth (vs M6's 170GB/s) also matters more at
+  this model size, since larger models are more bandwidth-bound during
+  token generation — a second reason to prefer M5 Pro over an M6 config
+  with more raw RAM but less bandwidth.
 
 ## QA stage: local in iteration 1, Claude API in iteration 2
 
@@ -61,8 +73,6 @@ is a downstream check regardless of which LLM produced Silver.
 
 ## Open items
 
-- Exact model pin (Qwen2.5 vs Llama 3.1, and size) — deferred to
-  implementation time
 - Whether `EnrichmentAgent`/`QAAgent`'s tool-use loop code needs changes to
   target Ollama's API vs `anthropic.Anthropic`, or whether an
   abstraction/adapter is worth adding given the iteration-2 QA swap is

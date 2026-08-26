@@ -38,15 +38,22 @@ from "crawl the dark web" to specific, bounded source categories.
   ([[project_shadowlense]] macOS section): `brew install tor` on the Mac
   Mini alongside the container setup.
 
-### Credential exposure via HIBP (no onion crawling)
+### Credential exposure via DeHashed (no onion crawling)
 
-- New `source_type: "hibp_domain_search"`, clearnet only, no Tor.
-- Uses the Have I Been Pwned domain-search API (~$3.50/mo) to check whether
-  watched domains (`alert_domains`) appear in known breaches — same
-  intelligence value as scraping credential-paste sites, without touching
-  the dark web or storing any actual leaked credential data.
-- Alternatives considered: DeHashed, Leak-Lookup (both viable, HIBP is the
-  most purpose-built for domain monitoring specifically).
+- New `source_type: "dehashed_search"`, clearnet only, no Tor.
+- **HIBP considered and dropped**: its domain-search API requires proving
+  ownership/control of a domain before you're allowed to search it. Shadowlense
+  isn't scoped to only the user's own domains, so that requirement disqualifies
+  HIBP outright — not a pricing issue, a hard capability mismatch.
+- DeHashed doesn't require domain ownership verification — general breach
+  search by domain/email/username, credit-based pricing (~$0.02/query),
+  free tier includes 10 monitor tasks. Exact Monitor-product pricing is
+  behind a login wall, not yet confirmed.
+- Leak-Lookup considered too: free public tier only returns the site name
+  (not enough signal), private tier pricing is quote-only and paid via
+  Bitcoin/XMR — deprioritized versus DeHashed's transparent credit model.
+- Same intelligence value as scraping credential-paste sites, without
+  touching the dark web or storing any actual leaked credential data.
 
 ## Iteration 2 (deferred)
 

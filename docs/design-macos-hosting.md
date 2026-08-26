@@ -17,6 +17,15 @@ isolated from the host OS.
 
 - **Isolation**: Docker container. Nothing installed directly on macOS beyond
   the container runtime — no system Python, no host-level dependencies.
+  **One deliberate exception: Ollama runs natively on macOS**, not inside
+  the container. Docker on macOS doesn't pass through Metal/GPU, so a
+  containerized Ollama would lose the M5 Pro's GPU/bandwidth advantage
+  entirely — the whole reason that hardware was chosen (see
+  `design-llm-strategy.md`). The Shadowlense container calls host-native
+  Ollama over the network (`host.docker.internal:11434`). Accepted
+  trade-off, not an oversight — and it means Ollama is also available
+  natively for other projects on the machine, not locked inside this one
+  container.
 - **Container engine**: OrbStack or Docker Desktop (either works; OrbStack is
   lighter/more Mac-native).
 - **Scheduling**: `launchd`, not cron — it's the native macOS mechanism and
@@ -26,6 +35,37 @@ isolated from the host OS.
 - **Image build**: built locally on the Mac Mini (`docker build`). No
   registry, no CI — same machine builds and runs it, so there's nothing to
   push/pull. Rebuild manually after `git pull` when pipeline code changes.
+
+### Ollama setup (native, host-level exception)
+
+```bash
+# Install and start Ollama as a background service
+brew install ollama
+brew services start ollama
+
+# Pull both tiers used by the pipeline (see design-llm-strategy.md)
+ollama pull qwen3:14b      # EnrichmentAgent
+ollama pull qwen3:32b      # QAAgent, iteration 1
+# or, for faster inference at similar quality:
+# ollama pull qwen3:30b-a3b
+
+# Verify it's listening (default port 11434)
+curl -fsS http://127.0.0.1:11434/api/tags
+```
+
+Ollama binds to `127.0.0.1:11434` by default, which is reachable from the
+Mac's other native processes but not automatically from inside a Docker
+container. Two options, pick one when implementing:
+- Point the container at `http://host.docker.internal:11434` (Docker
+  Desktop and OrbStack both resolve this automatically to the host) — no
+  Ollama config change needed.
+- Or set `OLLAMA_HOST=0.0.0.0:11434` before starting the service, so it
+  also binds on the Docker bridge network — broader exposure, only do this
+  if `host.docker.internal` doesn't resolve for some reason.
+
+`EnrichmentAgent`/`QAAgent` need their `anthropic.Anthropic` client calls
+pointed at this endpoint instead (or behind a small adapter — still an
+open item, see `design-llm-strategy.md`).
 
 ### File layout
 
